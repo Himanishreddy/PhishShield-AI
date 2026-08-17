@@ -24,3 +24,6 @@ streamlit>=1.30
 # --- Layer 3 also requires Ollama, installed separately (NOT via pip) ---
 # 1. Download from https://ollama.com
 # 2. Run: ollama pull llama3.2
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.0
