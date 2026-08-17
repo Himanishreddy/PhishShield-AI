@@ -1,0 +1,15 @@
+﻿Layer-2/models/
+Layer-2/data/
+__pycache__/
+*.pyc
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.csv
+*.zip
+*.eml
+.venv/
+venv/
+.vscode/
+.DS_Store
