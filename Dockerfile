@@ -26,8 +26,7 @@ COPY Layer-3/ ./Layer-3/
 COPY pipeline.py ./
 
 # Download the trained 3-class model from Hugging Face.
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='heheehe84737/PhishShield-AI-3class', local_dir='/app/Layer-2/models/phishing-model-3class')"
-
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='hehehehe84737/PhishShield-AI-3class', local_dir='/app/Layer-2/models/phishing-model-3class')"
 # FastAPI listens on Render's HTTP port.
 EXPOSE 8000
 
