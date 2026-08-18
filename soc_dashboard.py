@@ -265,7 +265,8 @@ if uploaded is not None:
 # ---------------------------------------------------------------------------
 
 def color_for(verdict: str) -> str:
-    return {"phishing": "#f0506e", "suspicious": "#d9a441", "clean": "#3fb950"}.get(verdict, "#8b98a5")
+    return {"phishing": "#f0506e", "ai_phish": "#f0506e", "suspicious": "#d9a441",
+            "clean": "#3fb950"}.get(verdict, "#8b98a5")
 
 
 if analyze and raw_email.strip():
@@ -284,12 +285,15 @@ if analyze and raw_email.strip():
     verdict = result["final_verdict"]
     score = result["final_risk_score"]
     accent = color_for(verdict)
+    # ai_phish shares the phishing (red) styling and gets a readable label
+    css_class = "phishing" if verdict == "ai_phish" else verdict
+    verdict_label = "AI-GENERATED PHISHING" if verdict == "ai_phish" else verdict.upper()
 
     # ---- Verdict banner (signature element) ----
     st.markdown(f"""
-    <div class="verdict {verdict}">
+    <div class="verdict {css_class}">
       <div class="label">Final verdict · fused risk score</div>
-      <div class="value">{verdict.upper()} · {score:.0f}/100</div>
+      <div class="value">{verdict_label} · {score:.0f}/100</div>
       <div class="score-track">
         <div class="score-fill" style="width:{score}%;background:{accent}"></div>
       </div>

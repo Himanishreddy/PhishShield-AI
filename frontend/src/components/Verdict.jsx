@@ -1,7 +1,18 @@
+// Shows the pipeline's verdict: a headline banner plus a breakdown of what
+// each detection layer found. Color reflects threat level.
+
 function verdictClass(v) {
-  if (v === "phishing") return "phishing";
+  // ai_phish is still phishing — show it with the same red treatment.
+  if (v === "phishing" || v === "ai_phish") return "phishing";
   if (v === "suspicious") return "suspicious";
   return "clean";
+}
+
+function verdictLabel(v) {
+  if (v === "ai_phish") return "AI-Generated Phishing";
+  if (v === "phishing") return "Phishing";
+  if (v === "suspicious") return "Suspicious";
+  return "Clean";
 }
 
 function AuthChip({ label, value }) {
@@ -15,27 +26,32 @@ function AuthChip({ label, value }) {
 }
 
 export default function Verdict({ result }) {
-  const v = result.final_verdict;
+  const verdict = result.final_verdict;
   const score = result.final_risk_score;
-  const l1 = result.layer1 || {};
-  const l2 = result.layer2;
-  const l3 = result.layer3;
-  const auth = l1.auth || {};
+  const layer1 = result.layer1 || {};
+  const layer2 = result.layer2;
+  const layer3 = result.layer3;
+  const auth = layer1.auth || {};
 
   return (
     <div className="verdict-wrap">
-      <div className={`verdict-banner ${verdictClass(v)}`}>
+      <div className={`verdict-banner ${verdictClass(verdict)}`}>
         <div className="verdict-head">
           <span className="verdict-eyebrow">Final verdict · fused risk</span>
           <span className="verdict-title">
-            {v.toUpperCase()} · {Math.round(score)}/100
+            {verdictLabel(verdict)} · {Math.round(score)}/100
           </span>
         </div>
         <div className="score-track">
-          <div className={`score-fill ${verdictClass(v)}`} style={{ width: `${score}%` }} />
+          <div
+            className={`score-fill ${verdictClass(verdict)}`}
+            style={{ width: `${score}%` }}
+          />
         </div>
         <div className="verdict-path">
-          {result.layer2_ran ? "Rules + classifier ran" : "Rules only (classifier gated out)"}
+          {result.layer2_ran
+            ? "Rules and classifier both ran"
+            : "Rules only — classifier was skipped"}
           {result.layer3_ran ? " · attribution attached" : ""}
         </div>
       </div>
@@ -49,43 +65,43 @@ export default function Verdict({ result }) {
             <AuthChip label="DMARC" value={auth.dmarc} />
           </div>
           <div className="kv">
-            <span className="k">infra risk</span>
-            <span className="v">{l1.infra_risk_score}/100</span>
+            <span className="k">Infra risk</span>
+            <span className="v">{layer1.infra_risk_score}/100</span>
           </div>
-          {l1.from_address && (
+          {layer1.from_address && (
             <div className="kv">
-              <span className="k">from</span>
-              <span className="v mono-trunc">{l1.from_address}</span>
+              <span className="k">From</span>
+              <span className="v mono-trunc">{layer1.from_address}</span>
             </div>
           )}
-          {l1.reasons && l1.reasons.length > 0 && (
+          {layer1.reasons && layer1.reasons.length > 0 && (
             <ul className="reasons">
-              {l1.reasons.map((r, i) => (
-                <li key={i}>{r}</li>
+              {layer1.reasons.map((reason, i) => (
+                <li key={i}>{reason}</li>
               ))}
             </ul>
           )}
         </section>
 
         <section className="layer-card">
-          <h3>Layer 2 · Semantic</h3>
-          {l2 == null ? (
+          <h3>Layer 2 · Language</h3>
+          {layer2 == null ? (
             <div className="skipped">
-              Skipped — Layer 1 judged this clean from an authenticated sender, so
-              the classifier wasn't needed.
+              Skipped. Layer 1 cleared this email from an authenticated sender,
+              so the classifier wasn't needed.
             </div>
           ) : (
             <>
               <div className="kv">
-                <span className="k">predicted</span>
-                <span className="v">{l2.predicted_label}</span>
+                <span className="k">Prediction</span>
+                <span className="v">{layer2.predicted_label}</span>
               </div>
               <div className="kv">
-                <span className="k">confidence</span>
-                <span className="v">{(l2.confidence * 100).toFixed(1)}%</span>
+                <span className="k">Confidence</span>
+                <span className="v">{(layer2.confidence * 100).toFixed(1)}%</span>
               </div>
               <div className="probs">
-                {Object.entries(l2.probabilities || {}).map(([label, p]) => (
+                {Object.entries(layer2.probabilities || {}).map(([label, p]) => (
                   <div className="prob" key={label}>
                     <div className="prob-top">
                       <span>{label}</span>
@@ -102,45 +118,45 @@ export default function Verdict({ result }) {
         </section>
       </div>
 
-      {l3 && l3._meta && l3._meta.status === "ok" && (
+      {layer3 && layer3._meta && layer3._meta.status === "ok" && (
         <section className="layer-card attribution">
-          <h3>Layer 3 · Attribution (inferred)</h3>
+          <h3>Layer 3 · Attribution</h3>
           <div className="attr-grid">
             <div className="kv">
-              <span className="k">objective</span>
-              <span className="v">{l3.primary_objective}</span>
+              <span className="k">Objective</span>
+              <span className="v">{layer3.primary_objective}</span>
             </div>
             <div className="kv">
-              <span className="k">target</span>
-              <span className="v">{l3.target_persona}</span>
+              <span className="k">Target</span>
+              <span className="v">{layer3.target_persona}</span>
             </div>
             <div className="kv">
-              <span className="k">sophistication</span>
-              <span className="v">{l3.sophistication}</span>
+              <span className="k">Sophistication</span>
+              <span className="v">{layer3.sophistication}</span>
             </div>
           </div>
-          {l3.psychological_triggers && (
+          {layer3.psychological_triggers && (
             <div className="triggers">
-              {l3.psychological_triggers.map((t, i) => (
+              {layer3.psychological_triggers.map((t, i) => (
                 <span className="trigger" key={i}>
                   {t}
                 </span>
               ))}
             </div>
           )}
-          {l3.analyst_summary && (
+          {layer3.analyst_summary && (
             <div className="analyst-summary">
               <span className="as-label">Analyst summary</span>
-              {l3.analyst_summary}
+              {layer3.analyst_summary}
             </div>
           )}
-          <div className="attr-disclaimer">{l3._meta.disclaimer}</div>
+          <div className="attr-disclaimer">{layer3._meta.disclaimer}</div>
         </section>
       )}
-      {l3 && l3._meta && l3._meta.status !== "ok" && (
+      {layer3 && layer3._meta && layer3._meta.status !== "ok" && (
         <section className="layer-card">
           <h3>Layer 3 · Attribution</h3>
-          <div className="skipped">{l3._meta.detail}</div>
+          <div className="skipped">{layer3._meta.detail}</div>
         </section>
       )}
     </div>

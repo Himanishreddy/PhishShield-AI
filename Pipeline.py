@@ -86,6 +86,7 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
 
     final = round(min(final, 100.0), 1)
 
+    # Base verdict from the fused score (recall-favoring thresholds)
     if final >= 60:
         verdict = "phishing"
     elif final >= 30:
@@ -93,10 +94,22 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
     else:
         verdict = "clean"
 
+    # Preserve the AI-vs-human phishing distinction — the project's core claim.
+    # If the email is judged phishing AND Layer 2 specifically identified it as
+    # AI-generated, surface that as the final verdict instead of the generic
+    # "phishing". We only do this when the model actually predicted ai_phish
+    # (not merely when that probability is nonzero), so it stays trustworthy.
+    l2_label = None
+    if layer2_result is not None:
+        l2_label = layer2_result.get("predicted_label")
+    if verdict == "phishing" and l2_label == "ai_phish":
+        verdict = "ai_phish"
+
     return {
         "final_verdict": verdict,
         "final_risk_score": final,
         "layer2_phish_probability": l2_phish_prob,
+        "layer2_predicted_label": l2_label,
     }
 
 
