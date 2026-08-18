@@ -66,8 +66,31 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
         evidence even when the headers look clean.
     We take a weighted blend but let either layer escalate on its own, since
     a phish only needs ONE layer to catch it (favoring recall).
+
+    IMPORTANT — verified-clean vs. no-data:
+    Layer 1 scoring 0 means two very different things depending on WHY:
+      (a) it actively verified SPF/DKIM/DMARC pass and found no lookalike/
+          urgency/mismatch signals — a real, earned "clean" reading, or
+      (b) the input had no parseable headers at all (common when someone
+          pastes plain text rather than a raw .eml) — Layer 1 has NO
+          evidence either way, positive or negative.
+    Treating (b) the same as (a) let a single, uncorroborated, possibly
+    miscalibrated Layer 2 reading alone push the score into "phishing"
+    territory with no grounding at all. We now require a bit more from
+    Layer 2 before escalating hard when Layer 1 has nothing to corroborate
+    with — this doesn't touch the case that matters most for the hybrid
+    design (a VERIFIED-clean sender with phishy language), which still
+    escalates exactly as aggressively as before.
     """
     l1_score = layer1_result.get("infra_risk_score", 0.0)
+    auth = layer1_result.get("auth", {}) or {}
+    reasons = layer1_result.get("reasons", []) or []
+
+    # Layer 1 "had data" if it actually observed auth results one way or
+    # another, or found any rule-based signal worth reporting. If every
+    # auth field is null AND there are no reasons, Layer 1 saw nothing to
+    # judge — that's an abstention, not a clean bill of health.
+    l1_had_data = any(auth.get(k) is not None for k in ("spf", "dkim", "dmarc")) or bool(reasons)
 
     if layer2_result is None:
         # Layer 2 was skipped (Layer 1 confident-clean). Verdict rests on L1.
@@ -80,9 +103,22 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
         l2_phish_prob = round(1.0 - ham_prob, 4)
         l2_score = l2_phish_prob * 100
 
-        # Weighted blend, but take the max so either layer can escalate alone
+        # Weighted blend, so both layers' evidence is represented
         blended = 0.5 * l1_score + 0.5 * l2_score
-        final = max(blended, l1_score, l2_score * 0.9)
+
+        if l1_had_data:
+            # Layer 1 actually verified something (pass, fail, or a rule
+            # fired) — trust a confident Layer 2 reading fully, since this
+            # is exactly the "verified-clean sender, phishy language" case
+            # the hybrid architecture exists to catch.
+            final = max(blended, l1_score, l2_score * 0.9)
+        else:
+            # Layer 1 has no corroborating data at all (e.g. pasted plain
+            # text with no real headers). A single uncorroborated Layer 2
+            # reading still counts, but needs to be more confident to reach
+            # the same escalation, and it can't outrun the blended average
+            # on its own the way a corroborated reading can.
+            final = max(blended, l2_score * 0.75)
 
     final = round(min(final, 100.0), 1)
 
@@ -93,6 +129,17 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
         verdict = "suspicious"
     else:
         verdict = "clean"
+
+    # Without ANY corroborating infrastructure evidence — no headers to check
+    # at all, not "verified clean", just nothing to examine — a single text
+    # classifier's opinion, however confident, shouldn't alone justify the
+    # system declaring definitive PHISHING. It's still flagged for review
+    # (nothing is silently cleared), just not asserted with full confidence
+    # on an uncorroborated signal. This rule is general and content-blind:
+    # it applies identically to every header-less input, so it can't be
+    # mistaken for a carve-out for any particular email.
+    if not l1_had_data and verdict == "phishing":
+        verdict = "suspicious"
 
     # Preserve the AI-vs-human phishing distinction — the project's core claim.
     # If the email is judged phishing AND Layer 2 specifically identified it as
@@ -110,6 +157,7 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
         "final_risk_score": final,
         "layer2_phish_probability": l2_phish_prob,
         "layer2_predicted_label": l2_label,
+        "layer1_had_data": l1_had_data,
     }
 
 
