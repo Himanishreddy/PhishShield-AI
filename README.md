@@ -231,7 +231,6 @@ recall. Layer 3 runs only when the fused verdict is `phishing`.
 ---
 
 ## Acknowledgements
-
-Built as a capstone project. Uses `distilbert-base-uncased` (Hugging Face
+ Uses `distilbert-base-uncased` (Hugging Face
 Transformers), Ollama for local LLM inference, and Streamlit for the dashboard.
 Datasets are public phishing/legitimate email corpora; see Setup for sourcing.
