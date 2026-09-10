@@ -1,0 +1,44 @@
+{
+  "model": "Layer-2\\models\\phishing-model-3class",
+  "n_legitimate": 20,
+  "false_positives": 3,
+  "false_positive_rate": 0.15,
+  "mean_confidence_when_wrong": 0.8992727398872375,
+  "mean_p_ham": 0.8422903432161547,
+  "by_category": {
+    "institutional_south_asian": {
+      "n": 6,
+      "false_positives": 1,
+      "fp_rate": 0.16666666666666666,
+      "mean_p_ham": 0.8445628235737482
+    },
+    "legit_account_notification": {
+      "n": 3,
+      "false_positives": 0,
+      "fp_rate": 0.0,
+      "mean_p_ham": 0.9242461323738098
+    },
+    "legit_hr_admin": {
+      "n": 4,
+      "false_positives": 0,
+      "fp_rate": 0.0,
+      "mean_p_ham": 0.9998878687620163
+    },
+    "legit_professional": {
+      "n": 3,
+      "false_positives": 0,
+      "fp_rate": 0.0,
+      "mean_p_ham": 0.9999567270278931
+    },
+    "legit_security_notice": {
+      "n": 4,
+      "false_positives": 2,
+      "fp_rate": 0.5,
+      "mean_p_ham": 0.5015674674068578
+    }
+  },
+  "predicted_distribution": {
+    "ham": 17,
+    "phishing": 3
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "model": "Layer-2\\models\\phishing-model-v4",
+  "n_legitimate": 20,
+  "false_positives": 2,
+  "false_positive_rate": 0.1,
+  "mean_confidence_when_wrong": 0.9627269506454468,
+  "mean_p_ham": 0.9028370433137752,
+  "by_category": {
+    "academic": {
+      "n": 1,
+      "false_positives": 0,
+      "fp_rate": 0.0,
+      "mean_p_ham": 0.9998705387115479
+    },
+    "general_professional": {
+      "n": 6,
+      "false_positives": 2,
+      "fp_rate": 0.3333333333333333,
+      "mean_p_ham": 0.6769693768971289
+    },
+    "recruitment": {
+      "n": 7,
+      "false_positives": 0,
+      "fp_rate": 0.0,
+      "mean_p_ham": 0.9994157552719116
+    },
+    "security_account": {
+      "n": 6,
+      "false_positives": 0,
+      "fp_rate": 0.0,
+      "mean_p_ham": 0.9998572965463003
+    }
+  },
+  "predicted_distribution": {
+    "ham": 18,
+    "phishing": 2
+  }
+}

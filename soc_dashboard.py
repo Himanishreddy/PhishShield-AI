@@ -182,58 +182,102 @@ def load_system(model_path: str):
     return layer1_mod, predict_mod, pipeline_mod, classifier, layer3_mod
 
 
-# ---------------------------------------------------------------------------
-# Sidebar — configuration
-# ---------------------------------------------------------------------------
-
-st.sidebar.markdown("### Configuration")
-
-# Auto-discover trained models under Layer-2/models
-models_dir = ROOT / "Layer-2" / "models"
-available = []
-if models_dir.exists():
-    available = [str(p) for p in models_dir.iterdir() if p.is_dir()]
-
-if available:
-    model_path = st.sidebar.selectbox("Detection model", available,
-                                      index=len(available) - 1,
-                                      help="3-class model reports ham / phishing / ai_phish")
-else:
-    model_path = st.sidebar.text_input(
-        "Model path", value=str(ROOT / "Layer-2" / "models" / "phishing-model"))
-
-ensemble = st.sidebar.checkbox(
-    "Ensemble mode (run Layer 2 on every email)", value=False,
-    help="Off = gate: Layer 2 is skipped when Layer 1 is confident-clean and the "
-         "sender is authenticated. On = Layer 2 always runs.")
-
-run_layer3 = st.sidebar.checkbox(
-    "Layer 3 attribution (confirmed phishing only)", value=False,
-    help="Runs a local LLM (Ollama) to infer attacker methodology on emails "
-         "judged phishing. Needs Ollama running with a model pulled.")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    "<span class='tag' style='color:#8b98a5;font-family:IBM Plex Mono,monospace;"
-    "font-size:0.72rem'>Layer 1 · rules & headers<br>Layer 2 · DistilBERT semantic<br>"
-    "Fusion · recall-favoring</span>", unsafe_allow_html=True)
-
 
 # ---------------------------------------------------------------------------
-# Masthead
+# Clean PhishShield AI product interface
 # ---------------------------------------------------------------------------
 
 st.markdown("""
-<div class="ps-masthead">
-  <h1>PhishShield<span style="color:#39c5cf">/</span>SOC</h1>
-  <span class="tag">Security Operations · Triage Console</span>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg:#0b1020; --card:#11182a; --card2:#151e33; --border:#26324a;
+  --text:#f4f7fb; --muted:#9aa8bf; --blue:#4da3ff;
+  --green:#35d07f; --yellow:#f5c451; --red:#ff5d73;
+}
+.stApp {
+  background:radial-gradient(circle at 80% 0%,rgba(77,163,255,.10),transparent 30%),var(--bg);
+  color:var(--text);
+}
+html,body,[class*="css"] { font-family:'Inter',sans-serif; }
+.block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
+[data-testid="stSidebar"] { display:none; }
+
+.ps-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:2.2rem; }
+.ps-brand { display:flex;align-items:center;gap:.8rem; }
+.ps-shield { width:42px;height:42px;display:flex;align-items:center;justify-content:center;
+  border:1px solid #31547e;border-radius:12px;background:#101d32;font-size:1.35rem; }
+.ps-title { font-size:1.45rem;font-weight:800;letter-spacing:-.03em; }
+.ps-subtitle { color:var(--muted);font-size:.82rem;margin-top:.12rem; }
+.ps-status { border:1px solid #245b43;background:#0d2119;color:var(--green);
+  border-radius:999px;padding:.42rem .8rem;font-size:.75rem;font-weight:600; }
+
+.ps-intro { text-align:center;margin:1.4rem 0 1.5rem; }
+.ps-intro h2 { font-size:2rem;margin:0;letter-spacing:-.04em; }
+.ps-intro p { color:var(--muted);margin:.55rem 0 0; }
+
+.input-card,.result-card { background:var(--card);border:1px solid var(--border);
+  border-radius:16px;padding:1.2rem;box-shadow:0 15px 45px rgba(0,0,0,.18); }
+.input-label { font-weight:600;font-size:.9rem;margin-bottom:.55rem; }
+.stTextArea textarea { background:#0b1222!important;color:var(--text)!important;
+  border:1px solid var(--border)!important;border-radius:10px!important;
+  font-family:'Inter',sans-serif!important;font-size:.88rem!important; }
+.stButton button { border-radius:9px!important;font-weight:700!important;min-height:2.7rem; }
+
+.result-card { margin-top:1.7rem; }
+.verdict { text-align:center;padding:1.2rem;border-radius:14px;border:1px solid var(--border);margin-bottom:1.2rem; }
+.verdict.clean { background:rgba(53,208,127,.07);border-color:rgba(53,208,127,.35); }
+.verdict.suspicious { background:rgba(245,196,81,.07);border-color:rgba(245,196,81,.35); }
+.verdict.phishing { background:rgba(255,93,115,.07);border-color:rgba(255,93,115,.35); }
+.verdict-icon { font-size:2rem; }
+.verdict-title { font-size:1.55rem;font-weight:800;margin-top:.35rem; }
+.verdict-desc { color:var(--muted);font-size:.88rem;margin-top:.35rem; }
+.risk { font-size:2.1rem;font-weight:800;margin-top:.6rem; }
+.risk-track,.confidence-track { height:8px;background:#202a40;border-radius:999px;overflow:hidden;margin-top:.8rem; }
+.risk-fill,.confidence-fill { height:100%;border-radius:999px; }
+
+.info-card { background:var(--card2);border:1px solid var(--border);border-radius:13px;
+  padding:1rem 1.05rem;height:100%; }
+.info-title { font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--muted);margin-bottom:.8rem;font-weight:700; }
+.info-row { display:flex;justify-content:space-between;gap:.8rem;padding:.5rem 0;
+  border-bottom:1px solid rgba(38,50,74,.65);font-size:.85rem; }
+.info-row:last-child { border-bottom:none; }
+.good{color:var(--green);font-weight:600}.warn{color:var(--yellow);font-weight:600}
+.bad{color:var(--red);font-weight:600}.neutral{color:var(--text);font-weight:500}
+.reason { padding:.55rem 0;color:#dce4f0;font-size:.86rem;border-bottom:1px solid rgba(38,50,74,.65); }
+.reason:last-child { border-bottom:none; }
+.confidence-row { margin:.7rem 0; }
+.confidence-head { display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:.3rem; }
+.confidence-fill { background:var(--blue); }
+.footer-note { text-align:center;color:#697890;font-size:.72rem;margin-top:2rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# Production model is selected automatically. Users do not see implementation details.
+model_path = str(ROOT / "Layer-2" / "models" / "phishing-model-3class")
+ensemble = False
+run_layer3 = False
+
+st.markdown("""
+<div class="ps-header">
+  <div class="ps-brand">
+    <div class="ps-shield">🛡️</div>
+    <div>
+      <div class="ps-title">PhishShield AI</div>
+      <div class="ps-subtitle">Intelligent Email Security</div>
+    </div>
+  </div>
+  <div class="ps-status">● Protection Ready</div>
+</div>
+<div class="ps-intro">
+  <h2>Analyze an Email</h2>
+  <p>Check an email for phishing, fraud, and suspicious activity.</p>
 </div>
 """, unsafe_allow_html=True)
 
-
-# ---------------------------------------------------------------------------
-# Input
-# ---------------------------------------------------------------------------
+st.markdown('<div class="input-card"><div class="input-label">Email content</div>', unsafe_allow_html=True)
 
 SAMPLE = """From: "Microsoft Support" <security-update@micros0ft-support.com>
 Reply-To: attacker-collect@totally-diff-domain.ru
@@ -246,182 +290,139 @@ Your account will be locked within 2 hours due to unauthorized login attempt.
 Click here to verify your identity: http://secure-login-portal.xyz/verify
 """
 
-col_in, col_btn = st.columns([5, 1])
-with col_in:
-    raw_email = st.text_area("Raw email (paste full .eml including headers)",
-                             value=SAMPLE, height=200, label_visibility="collapsed")
-with col_btn:
-    analyze = st.button("Analyze", type="primary", use_container_width=True)
+raw_email = st.text_area("Email content", value=SAMPLE, height=230, label_visibility="collapsed")
+
+c1, c2, c3 = st.columns([1.5, 1.5, 1])
+with c1:
+    analyze = st.button("🔍 Analyze Email", type="primary", use_container_width=True)
+with c2:
+    uploaded = st.file_uploader("Upload .eml", type=["eml"], label_visibility="collapsed")
+    if uploaded is not None:
+        raw_email = uploaded.read().decode(errors="ignore")
+with c3:
     if st.button("Clear", use_container_width=True):
         st.rerun()
 
-uploaded = st.file_uploader("…or upload a .eml file", type=["eml"], label_visibility="collapsed")
-if uploaded is not None:
-    raw_email = uploaded.read().decode(errors="ignore")
-
-
-# ---------------------------------------------------------------------------
-# Analysis + render
-# ---------------------------------------------------------------------------
+st.markdown('</div>', unsafe_allow_html=True)
 
 def color_for(verdict: str) -> str:
-    return {"phishing": "#f0506e", "ai_phish": "#f0506e", "suspicious": "#d9a441",
-            "clean": "#3fb950"}.get(verdict, "#8b98a5")
+    return {"phishing":"#ff5d73","ai_phish":"#ff5d73",
+            "suspicious":"#f5c451","clean":"#35d07f"}.get(verdict,"#4da3ff")
 
+def human_verdict(verdict: str):
+    if verdict == "clean":
+        return "EMAIL APPEARS SAFE","No significant phishing indicators were detected.","clean","✅"
+    if verdict == "ai_phish":
+        return "AI-GENERATED PHISHING DETECTED","The email shows strong indicators of AI-assisted phishing.","phishing","🚨"
+    if verdict == "phishing":
+        return "PHISHING DETECTED","This email contains indicators commonly associated with phishing.","phishing","🚨"
+    return "SUSPICIOUS EMAIL","This email requires additional attention.","suspicious","⚠️"
 
 if analyze and raw_email.strip():
     try:
         layer1_mod, predict_mod, pipeline_mod, classifier, layer3_mod = load_system(model_path)
     except Exception as e:
-        st.error(f"Couldn't load the detection system: {e}")
+        st.error(f"Unable to start email analysis: {e}")
         st.stop()
 
-    raw_bytes = raw_email.encode()
     result = pipeline_mod.run_pipeline(
-        raw_bytes, layer1_mod, classifier, predict_mod.load_eml_text,
-        always_run_layer2=ensemble,
-        layer3_mod=(layer3_mod if run_layer3 else None))
+        raw_email.encode(), layer1_mod, classifier, predict_mod.load_eml_text,
+        always_run_layer2=ensemble, layer3_mod=None
+    )
 
-    verdict = result["final_verdict"]
-    score = result["final_risk_score"]
+    verdict = result.get("final_verdict","suspicious")
+    score = float(result.get("final_risk_score") or 0)
+    title, description, css_class, icon = human_verdict(verdict)
     accent = color_for(verdict)
-    # ai_phish shares the phishing (red) styling and gets a readable label
-    css_class = "phishing" if verdict == "ai_phish" else verdict
-    verdict_label = "AI-GENERATED PHISHING" if verdict == "ai_phish" else verdict.upper()
 
-    # ---- Verdict banner (signature element) ----
     st.markdown(f"""
-    <div class="verdict {css_class}">
-      <div class="label">Final verdict · fused risk score</div>
-      <div class="value">{verdict_label} · {score:.0f}/100</div>
-      <div class="score-track">
-        <div class="score-fill" style="width:{score}%;background:{accent}"></div>
+    <div class="result-card">
+      <div class="verdict {css_class}">
+        <div class="verdict-icon">{icon}</div>
+        <div class="verdict-title">{title}</div>
+        <div class="verdict-desc">{description}</div>
+        <div class="risk">{score:.0f}<span style="font-size:1rem;color:#9aa8bf"> / 100 risk</span></div>
+        <div class="risk-track"><div class="risk-fill" style="width:{max(0,min(100,score))}%;background:{accent}"></div></div>
       </div>
-    </div>
     """, unsafe_allow_html=True)
 
-    l1 = result["layer1"]
-    l2 = result["layer2"]
+    l1 = result.get("layer1") or {}
+    l2 = result.get("layer2") or {}
+    auth = l1.get("auth") or {}
 
-    c1, c2 = st.columns(2)
+    def status(value):
+        value = str(value or "").lower()
+        if value == "pass": return '<span class="good">✓ Verified</span>'
+        if value == "fail": return '<span class="bad">✕ Failed</span>'
+        return '<span class="neutral">— Not available</span>'
 
-    # ---- Layer 1 panel ----
-    with c1:
-        auth = l1.get("auth", {})
-        def auth_row(k, v):
-            cls = "pass" if v == "pass" else ("fail" if v == "fail" else "")
-            return f"<div class='kv'><span class='k'>{k}</span><span class='v {cls}'>{v or '—'}</span></div>"
+    def risk_status():
+        if score >= 70: return '<span class="bad">High risk</span>'
+        if score >= 30: return '<span class="warn">Review</span>'
+        return '<span class="good">Low risk</span>'
 
-        reasons_html = "".join(f"<div class='reason'>{r}</div>"
-                               for r in l1.get("reasons", [])) or \
-                       "<div class='kv'><span class='v'>No rule-based flags</span></div>"
-
+    a,b = st.columns(2)
+    with a:
         st.markdown(f"""
-        <div class="panel">
-          <h3>Layer 1 — Metadata & Rules</h3>
-          <div class="kv"><span class="k">infra_risk</span><span class="v">{l1.get('infra_risk_score')}/100</span></div>
-          {auth_row('spf', auth.get('spf'))}
-          {auth_row('dkim', auth.get('dkim'))}
-          {auth_row('dmarc', auth.get('dmarc'))}
-          <div class="kv"><span class="k">from</span><span class="v">{(l1.get('from_address') or '—')[:34]}</span></div>
-          <div style="margin-top:0.9rem">{reasons_html}</div>
+        <div class="info-card">
+          <div class="info-title">Sender Verification</div>
+          <div class="info-row"><span>SPF</span>{status(auth.get("spf"))}</div>
+          <div class="info-row"><span>DKIM</span>{status(auth.get("dkim"))}</div>
+          <div class="info-row"><span>DMARC</span>{status(auth.get("dmarc"))}</div>
+          <div class="info-row"><span>Security risk</span>{risk_status()}</div>
         </div>
         """, unsafe_allow_html=True)
 
-    # ---- Layer 2 panel ----
-    with c2:
-        if l2 is None:
-            st.markdown(f"""
-            <div class="panel">
-              <h3>Layer 2 — DistilBERT Semantic</h3>
-              <div class="gate-note">Layer 2 was skipped. Layer 1 judged this email
-              confidently clean from an authenticated sender, so the semantic model
-              wasn't needed. Enable Ensemble mode to force it.</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            probs = l2.get("probabilities", {})
-            prob_html = ""
-            for lbl, p in probs.items():
-                prob_html += f"""
-                <div class="prob-row">
-                  <div class="plabel"><span>{lbl}</span><span>{p*100:.1f}%</span></div>
-                  <div class="prob-track"><div class="prob-fill" style="width:{p*100}%"></div></div>
-                </div>"""
-            st.markdown(f"""
-            <div class="panel">
-              <h3>Layer 2 — DistilBERT Semantic</h3>
-              <div class="kv"><span class="k">predicted</span><span class="v">{l2.get('predicted_label')}</span></div>
-              <div class="kv"><span class="k">confidence</span><span class="v">{l2.get('confidence',0)*100:.1f}%</span></div>
-              <div style="margin-top:0.9rem">{prob_html}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    with b:
+        prediction = l2.get("predicted_label")
+        pred_display = {"ham":"Likely legitimate","phishing":"Likely phishing",
+                        "ai_phish":"AI-generated phishing"}.get(prediction,"Not required")
+        confidence = float(l2.get("confidence") or 0)*100
+        st.markdown(f"""
+        <div class="info-card">
+          <div class="info-title">Email Content Analysis</div>
+          <div class="info-row"><span>Assessment</span><span class="neutral">{pred_display}</span></div>
+          <div class="info-row"><span>Confidence</span><span class="neutral">{confidence:.1f}%</span></div>
+          <div class="info-row"><span>Analysis status</span><span class="good">✓ Complete</span></div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ---- Analyst note on how the verdict was reached ----
-    ran = "both layers ran" if result.get("layer2_ran") else "Layer 1 only (Layer 2 gated out)"
-    st.markdown(f"""
-    <div class="gate-note" style="margin-top:1.2rem">
-      DECISION PATH · {ran}. Either layer can raise an alert on its own — the fusion
-      favors recall, because a missed phish costs more than a second look at a clean email.
-    </div>
-    """, unsafe_allow_html=True)
+    reasons = l1.get("reasons") or []
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="info-card"><div class="info-title">Why this result?</div>', unsafe_allow_html=True)
 
-    # ---- Layer 3 attribution panel ----
-    l3 = result.get("layer3")
-    if l3 is not None:
-        meta = l3.get("_meta", {})
-        if meta.get("status") == "ok":
-            triggers = l3.get("psychological_triggers", [])
-            trig_html = "".join(
-                f"<span style='display:inline-block;background:#1c232d;border:1px solid #2a333f;"
-                f"border-radius:99px;padding:0.15rem 0.7rem;margin:0.15rem 0.25rem 0.15rem 0;"
-                f"font-family:IBM Plex Mono,monospace;font-size:0.76rem;color:#d9a441'>{t}</span>"
-                for t in triggers)
-            indicators = l3.get("key_indicators", [])
-            ind_html = "".join(f"<div class='reason'>{i}</div>" for i in indicators)
+    if reasons:
+        for reason in reasons:
+            st.markdown(f'<div class="reason">• {reason}</div>', unsafe_allow_html=True)
+    elif verdict == "clean":
+        st.markdown('<div class="reason">• No significant security rules were triggered.</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="reason">• The email content contains patterns requiring attention.</div>', unsafe_allow_html=True)
 
-            st.markdown(f"""
-            <div class="panel" style="margin-top:1.2rem;border-left:4px solid #39c5cf">
-              <h3>Layer 3 — Threat Attribution (inferred)</h3>
-              <div class="kv"><span class="k">primary_objective</span><span class="v">{l3.get('primary_objective','—')}</span></div>
-              <div class="kv"><span class="k">target_persona</span><span class="v">{l3.get('target_persona','—')}</span></div>
-              <div class="kv"><span class="k">sophistication</span><span class="v">{l3.get('sophistication','—')}</span></div>
-              <div style="margin:0.7rem 0 0.3rem 0"><span class="k" style="font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8b98a5">psychological_triggers</span></div>
-              <div style="margin-bottom:0.6rem">{trig_html}</div>
-              <div style="margin:0.7rem 0 0.3rem 0"><span class="k" style="font-family:IBM Plex Mono,monospace;font-size:0.82rem;color:#8b98a5">key_indicators</span></div>
-              {ind_html}
-              <div style="margin-top:0.9rem;padding:0.7rem 0.8rem;background:#12171d;border-radius:6px;border:1px solid #2a333f">
-                <div style="font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#39c5cf;letter-spacing:0.1em;margin-bottom:0.4rem">ANALYST SUMMARY</div>
-                <div style="font-size:0.9rem;color:#e6edf3">{l3.get('analyst_summary','—')}</div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-            with st.expander("Illustrative generation prompt (hypothesis — not a recovered attacker input)"):
-                st.markdown(
-                    "<div class='gate-note' style='margin-bottom:0.6rem'>This is an example of the "
-                    "<b>kind</b> of instruction that could produce a similar email, generated for "
-                    "defensive understanding. It is NOT the attacker's real prompt — an LLM cannot "
-                    "recover that.</div>", unsafe_allow_html=True)
-                st.code(l3.get("illustrative_generation_prompt", "—"), language="text")
+    if l2:
+        with st.expander("View analysis confidence"):
+            labels = {"ham":"Legitimate","phishing":"Phishing","ai_phish":"AI-generated phishing"}
+            for lbl,p in (l2.get("probabilities") or {}).items():
+                value = float(p)*100
+                st.markdown(f"""
+                <div class="confidence-row">
+                  <div class="confidence-head"><span>{labels.get(lbl,lbl)}</span><span>{value:.1f}%</span></div>
+                  <div class="confidence-track"><div class="confidence-fill" style="width:{value}%"></div></div>
+                </div>
+                """, unsafe_allow_html=True)
 
-            st.caption(f"⚠ {meta.get('disclaimer','')}")
-        else:
-            st.markdown(f"""
-            <div class="panel" style="margin-top:1.2rem;border-left:4px solid #8b98a5">
-              <h3>Layer 3 — Threat Attribution</h3>
-              <div class="gate-note">{meta.get('detail', 'Layer 3 did not run.')}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    with st.expander("Raw verdict JSON (for report / debugging)"):
+    with st.expander("Technical details"):
         st.json(result)
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
 elif analyze:
-    st.warning("Paste an email first — headers included, so Layer 1 can read the authentication results.")
-else:
-    st.markdown(
-        "<div class='gate-note'>Paste an email above and hit Analyze. "
-        "The sample loaded is a spoofed-Microsoft credential-harvest — try it, "
-        "then swap in a clean email to watch the gate skip Layer 2.</div>",
-        unsafe_allow_html=True)
+    st.warning("Please paste an email or upload a .eml file first.")
+
+st.markdown(
+    '<div class="footer-note">PhishShield AI · Automated email security analysis · '
+    'Use results as a security aid, not as the sole basis for high-impact decisions.</div>',
+    unsafe_allow_html=True
+)
