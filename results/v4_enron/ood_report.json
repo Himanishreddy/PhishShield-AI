@@ -1,0 +1,13 @@
+{
+  "model": "Layer-2\\models\\phishing-model-3class",
+  "n_legitimate": 500,
+  "false_positives": 24,
+  "false_positive_rate": 0.048,
+  "mean_confidence_when_wrong": 0.9296863103906313,
+  "mean_p_ham": 0.9484254366022069,
+  "by_category": {},
+  "predicted_distribution": {
+    "ham": 476,
+    "phishing": 24
+  }
+}

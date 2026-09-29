@@ -27,12 +27,13 @@ COPY pipeline.py ./
 
 # Download the trained 3-class model from Hugging Face.
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='hehehehe84737/PhishShield-AI-3class', local_dir='/app/Layer-2/models/phishing-model-3class')"
-# FastAPI listens on Render's HTTP port.
+# Render passes the port to use in $PORT; fall back to 8000 locally.
+ENV PORT=8000
 EXPOSE 8000
 
 # Container health check.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('PORT', '8000') + '/api/health')" || exit 1
 
-# Start FastAPI.
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI (shell form so $PORT is expanded).
+CMD ["sh", "-c", "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

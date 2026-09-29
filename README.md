@@ -1,8 +1,9 @@
 # PhishShield AI
 
 A hybrid, layered phishing-detection pipeline that combines fast deterministic
-rules, a fine-tuned transformer classifier, and a local LLM attribution layer —
-surfaced through a Security Operations Center (SOC) triage dashboard.
+rules, a fine-tuned transformer classifier, and an AI adjudicator that makes the
+final call — surfaced through a React web app, a FastAPI backend and a
+Security Operations Center (SOC) triage dashboard.
 
 The project's focus is detecting **AI-generated phishing** alongside classic
 human-written phishing, and giving a security analyst not just a verdict but the
@@ -37,14 +38,15 @@ suspicious minority reaches the heavy analysis.
   ┌──────────────────────────────┐
   │ Fusion — combined verdict     │  recall-favoring
   └──────────────┬───────────────┘
-                 │ (only if phishing)
+                 │ (every email)
                  ▼
   ┌──────────────────────────────┐
-  │ Layer 3 — LLM attribution     │  inferred threat intel
-  │ objective, triggers, persona  │  (local, via Ollama)
+  │ Layer 3 — AI adjudicator      │  final verdict + plain-
+  │ weighs all evidence, with     │  language explanation
+  │ code-enforced guardrails      │  (OpenAI API)
   └──────────────┬───────────────┘
                  ▼
-        SOC Dashboard (Streamlit)
+     React app / FastAPI / Streamlit
 ```
 
 The two detection layers cover each other's blind spots. Layer 1 reads headers,
@@ -87,14 +89,16 @@ hidden, because understanding them is part of the engineering:
    production-grade "AI detector" would need harder negatives and mixed-source
    validation. (Listed under Future Work.)
 
-2. **Layer 3 is inference, not forensics.** The attribution layer does **not**
-   recover an attacker's real prompt or identity — an LLM cannot reconstruct
-   another model's input. It produces a *plausible hypothesis* about
-   methodology to accelerate analyst triage. Every Layer 3 output carries this
-   disclaimer, and its "illustrative generation prompt" is explicitly an
-   example, not a recovered artifact. In testing it sometimes mislabels the
-   objective — which is exactly why it is presented as an analyst aid to be
-   verified, never as ground truth.
+2. **Layer 3 is an AI judgement, not proof.** The adjudicator can be wrong, so
+   it is constrained in code: it cannot clear an email that Layer 1 has strong
+   technical evidence against, cannot clear a header-less email that Layer 2
+   flagged, and can only use the "AI-assisted" label when Layer 2 predicted
+   `ai_phish`. Before the model sees anything, code computes verified facts
+   (DMARC alignment, mailing-list/ARC forwarding, Reply-To relation, per-link
+   risk features, requests for passwords/OTPs/payments) so the model is not left
+   to interpret raw headers. The email itself is fenced as untrusted data to
+   resist prompt injection. If the API is unavailable, the result falls back to
+   the Layer 1 + Layer 2 assessment and is clearly marked as degraded.
 
 ---
 
@@ -104,6 +108,9 @@ hidden, because understanding them is part of the engineering:
 Phishing/
 ├── pipeline.py               Orchestrator — runs all layers, emits one verdict
 ├── soc_dashboard.py          Streamlit SOC triage UI
+├── test_layer3.py            Offline tests for Layer 3 + pipeline (no API key needed)
+├── backend/main.py           FastAPI REST API (POST /api/analyze)
+├── frontend/                 React (Vite) web app
 ├── requirements.txt
 ├── README.md
 │
@@ -119,7 +126,7 @@ Phishing/
 │   └── models/               (git-ignored) trained model(s)
 │
 └── Layer-3/
-    └── layer3_attribution.py LLM attribution via local Ollama
+    └── layer3_attribution.py AI adjudicator (final verdict, guardrails)
 ```
 
 Models and datasets are intentionally **not** in the repo (they're large and
@@ -165,15 +172,17 @@ python Layer-2/train_layer2.py \
     --task multiclass --epochs 3
 ```
 
-### 4. Install Ollama (for Layer 3)
+### 4. Layer 3 API key
 
-```bash
-# Install from https://ollama.com, then:
-ollama pull llama3.2
+Layer 3 calls the OpenAI API. Set the key as an environment variable (never in
+code):
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
 ```
 
-Layer 3 is optional — the pipeline and dashboard run without it and degrade
-gracefully if Ollama isn't available.
+Without a key the system still runs; results fall back to Layer 1 + Layer 2 and
+are marked as degraded.
 
 ---
 
@@ -185,16 +194,30 @@ gracefully if Ollama isn't available.
 python pipeline.py \
     --model Layer-2/models/phishing-model-3class \
     --eml Layer-1/sample_phish.eml \
-    --layer3 --pretty
+    --pretty
 ```
 
-Outputs one combined JSON verdict: the fused risk score, each layer's evidence,
-and — on confirmed phishing with `--layer3` — the attribution analysis.
+Outputs one JSON result: Layer 3's final verdict (`final`), the pre-Layer-3
+fused assessment (`fusion`), and each layer's evidence.
 
 Useful flags:
 - `--always-run-layer2` — ensemble mode: run the classifier on every email
   instead of gating it behind Layer 1.
 - `--dir <folder>` — score every `.eml` in a folder.
+- `--no-layer3` — Layers 1 + 2 + fusion only (ablation / offline).
+
+### Tests
+
+```bash
+python test_layer3.py
+```
+
+### Web app
+
+```bash
+python -m uvicorn backend.main:app --port 8000     # backend
+cd frontend && npm install && npm run dev          # frontend, http://localhost:5173
+```
 
 ### Dashboard
 
@@ -215,7 +238,8 @@ Layer 1 runs on every email. Layer 2 runs unless Layer 1 is confident the email
 is clean *and* the sender passed authentication (a compute-saving gate; toggle
 `--always-run-layer2` to disable it). The two signals are blended into a single
 0–100 score, but either layer can raise an alert on its own — the fusion favors
-recall. Layer 3 runs only when the fused verdict is `phishing`.
+recall. The fused result is passed to Layer 3 as evidence; Layer 3 runs on every
+email and issues the final verdict.
 
 ---
 
@@ -226,11 +250,12 @@ recall. Layer 3 runs only when the fused verdict is `phishing`.
 - Live WHOIS/RDAP integration for real domain-age signals in Layer 1
   (currently stubbed behind a clean interface).
 - Explainability overlays (token attributions) in the dashboard.
-- Feedback loop: analyst verdicts on Layer 3 output as future training signal.
+- Feedback loop: analyst corrections of Layer 3 verdicts as future training signal.
 
 ---
 
 ## Acknowledgements
  Uses `distilbert-base-uncased` (Hugging Face
-Transformers), Ollama for local LLM inference, and Streamlit for the dashboard.
+Transformers), the OpenAI API for the Layer 3 adjudicator, FastAPI, React and
+Streamlit.
 Datasets are public phishing/legitimate email corpora; see Setup for sourcing.

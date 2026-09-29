@@ -8,8 +8,12 @@ does NOT reimplement detection, so the API and the CLI/dashboard all share one
 source of truth.
 
 Run:
-    pip install fastapi "uvicorn[standard]" pydantic
-    uvicorn backend.main:app --reload --port 8000
+    pip install -r requirements.txt
+    $env:OPENAI_API_KEY = "sk-..."            (PowerShell; needed for Layer 3)
+    python -m uvicorn backend.main:app --port 8000
+
+    (Use "python -m uvicorn", not "uvicorn": on Windows with Smart App Control
+    the uvicorn.exe launcher is blocked, while python.exe is allowed.)
 
 Then open the auto-generated interactive docs at:
     http://localhost:8000/docs      (Swagger UI — try requests in the browser)
@@ -27,12 +31,13 @@ Project layout assumed (this file lives in backend/):
       Layer-1/layer1_detector.py
       Layer-2/predict.py
       Layer-2/models/...
-      Layer-3/layer3_attribution.py   (optional)
+      Layer-3/layer3_attribution.py   (AI adjudicator — final decision-maker)
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -80,7 +85,7 @@ def _default_model_dir() -> Path:
 
 app = FastAPI(
     title="PhishShield AI API",
-    description="Hybrid phishing detection — rules + DistilBERT + LLM attribution.",
+    description="Hybrid phishing detection — rules + DistilBERT + AI adjudicator.",
     version="1.0.0",
 )
 
@@ -138,7 +143,8 @@ class AnalyzeRequest(BaseModel):
     email: str = Field(..., description="Raw email text, including headers if available",
                        min_length=1)
     ensemble: bool = Field(False, description="Run Layer 2 on every email instead of gating")
-    run_layer3: bool = Field(False, description="Run Layer 3 attribution on confirmed phishing (needs Ollama)")
+    run_layer3: bool = Field(True, description="DEPRECATED and ignored: Layer 3 now runs on every email. Kept so existing clients that send this field keep working.")
+    skip_layer3: bool = Field(False, description="Skip Layer 3 and return the Layer 1 + Layer 2 fused assessment only (for ablation/testing). Off by default.")
     model: Optional[str] = Field(None, description="Path to a specific model folder (optional)")
 
     model_config = {"json_schema_extra": {"examples": [{
@@ -146,13 +152,14 @@ class AnalyzeRequest(BaseModel):
                  "Subject: URGENT: Account Suspended\n"
                  "Authentication-Results: mx; spf=fail; dkim=fail; dmarc=fail\n\n"
                  "Your account will be locked. Verify now: http://secure-login-portal.xyz",
-        "ensemble": False, "run_layer3": False}]}}
+        "ensemble": False}]}}
 
 
 class HealthResponse(BaseModel):
     status: str
     model_loaded: Optional[str]
     layer3_available: bool
+    layer3_api_key_set: bool = False   # True/False only; the key itself is never returned
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +173,7 @@ def health():
         status="ok",
         model_loaded=SYS.model_path,
         layer3_available=(ROOT / "Layer-3" / "layer3_attribution.py").exists(),
+        layer3_api_key_set=bool(os.getenv("OPENAI_API_KEY")),
     )
 
 
@@ -191,7 +199,9 @@ def analyze(req: AnalyzeRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
 
-    layer3_mod = system.layer3 if req.run_layer3 else None
+    # Layer 3 is the final authority and runs on every email. `run_layer3` from
+    # older clients is ignored; only an explicit skip_layer3 bypasses it.
+    layer3_mod = None if req.skip_layer3 else system.layer3
 
     try:
         result = system.pipeline.run_pipeline(
@@ -211,4 +221,4 @@ def analyze(req: AnalyzeRequest):
 @app.get("/", tags=["meta"])
 def root():
     """Friendly landing pointer to the docs."""
-    return {"message": "PhishShield AI API. Interactive docs at /docs"}
+    return {"message": "PhishShield AI API. Interactive docs at /docs"}

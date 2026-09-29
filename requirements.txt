@@ -4,6 +4,11 @@
 # Note on torch: the CPU build is installed by default below. If you have a
 # CUDA GPU and want acceleration, install torch separately from
 # https://pytorch.org/get-started/locally/ BEFORE running this file.
+#
+# Windows with Smart App Control: brand-new torch releases can be blocked
+# ("An Application Control policy has blocked this file"). Install a slightly
+# older CPU build first, e.g.:
+#   pip install "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu
 
 # --- Core ML / detection (Layer 2) ---
 torch>=2.1
@@ -18,12 +23,13 @@ pandas>=2.0
 # --- Dashboard (SOC UI) ---
 streamlit>=1.30
 
-# --- Layer 1 and Layer 3 use only the Python standard library ---
-# (email, json, re, urllib, dataclasses) — nothing to install.
-#
-# --- Layer 3 also requires Ollama, installed separately (NOT via pip) ---
-# 1. Download from https://ollama.com
-# 2. Run: ollama pull llama3.2
+# --- Layer 1 uses only the Python standard library ---
+
+# --- Layer 3 (AI adjudicator) ---
+# Needs the OPENAI_API_KEY environment variable at runtime (never put it in code).
+openai>=1.40
+
+# --- Backend API ---
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.0

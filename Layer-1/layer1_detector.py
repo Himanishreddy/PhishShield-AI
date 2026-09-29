@@ -41,7 +41,7 @@ WATCHED_BRANDS = [
 # Characters commonly used in homograph / lookalike attacks, mapped to the
 # Latin character they're meant to imitate.
 CONFUSABLES = {
-    "0": "o", "1": "l", "1": "i", "3": "e", "5": "s", "@": "a",
+    "0": "o", "1": "l", "3": "e", "5": "s", "@": "a",
     "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y",  # Cyrillic look-alikes
     "і": "i", "ѕ": "s", "ԁ": "d", "ɡ": "g",
 }
@@ -114,14 +114,18 @@ class RiskAssessment:
 # ---------------------------------------------------------------------------
 
 def _parse_auth_results(msg: Message) -> AuthResults:
-    """Parse the Authentication-Results header for spf/dkim/dmarc verdicts."""
-    header = msg.get("Authentication-Results", "") or ""
-    # Some MTAs split this across multiple headers
+    """Parse spf/dkim/dmarc verdicts from the TOPMOST Authentication-Results
+    header. That one is written by the receiving mail server; headers below it
+    travelled with the message and can be forged by the sender. Parenthesised
+    comments are removed first, because they can contain other results (e.g. an
+    ARC summary "arc=pass (spf=... dkim=...)") that are not this message's own."""
     all_headers = msg.get_all("Authentication-Results", []) or []
-    combined = header + " " + " ".join(all_headers)
+    top = str(all_headers[0]) if all_headers else ""
+    for _ in range(3):                                   # nested comments
+        top = re.sub(r"\([^()]*\)", " ", top)
 
     def extract(mechanism: str) -> Optional[str]:
-        match = re.search(rf"{mechanism}=(\w+)", combined, re.IGNORECASE)
+        match = re.search(rf"\b{mechanism}=(\w+)", top, re.IGNORECASE)
         return match.group(1).lower() if match else None
 
     return AuthResults(
@@ -172,6 +176,12 @@ def _check_lookalike(domain: str) -> tuple[Optional[str], float]:
         if brand == root:
             continue  # exact legitimate match, not a lookalike
 
+        # Strategy 0: pure homograph — after mapping look-alike characters the
+        # label IS the brand ('paypa1' -> 'paypal', 'micr0soft' -> 'microsoft').
+        if normalized == brand:
+            best_brand, best_score = brand, 1.0
+            continue
+
         # Strategy 1: whole-label edit distance (short domains, typos)
         dist = min(_levenshtein(root, brand), _levenshtein(normalized, brand))
         max_len = max(len(brand), len(root))
@@ -189,6 +199,24 @@ def _check_lookalike(domain: str) -> tuple[Optional[str], float]:
                 best_brand, best_score = brand, embedded_score
 
     return best_brand, round(best_score, 2)
+
+
+# Second-level labels under which organisations register (vit.ac.in, bbc.co.uk).
+_SLD_PUBLIC = {"ac", "co", "com", "edu", "gov", "net", "org", "res", "nic", "gen", "ind",
+               "firm", "mil", "ltd", "plc", "sch", "nhs", "police", "or", "ne", "go"}
+
+
+def registrable_domain(host: str) -> str:
+    """Best-effort organisational domain: mail.example.com -> example.com,
+    www.vit.ac.in -> vit.ac.in. Used so subdomains of the same organisation
+    are not treated as different senders."""
+    host = (host or "").lower().strip(".").split(":")[0]
+    labels = [x for x in host.split(".") if x]
+    if len(labels) <= 2 or re.fullmatch(r"[\d.]+", host):
+        return ".".join(labels)
+    if len(labels[-1]) == 2 and labels[-2] in _SLD_PUBLIC:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
 
 
 def _extract_domain(address: str) -> str:
@@ -274,7 +302,7 @@ def analyze_email(raw: str | bytes) -> RiskAssessment:
     reply_to = msg.get("Reply-To", "")
     if reply_to:
         reply_domain = _extract_domain(reply_to)
-        if reply_domain and reply_domain != sender_domain:
+        if reply_domain and registrable_domain(reply_domain) != registrable_domain(sender_domain):
             result.domain.reply_to_mismatch = True
 
     # Display name impersonation: e.g. "Microsoft Support <random@gmail.com>"
@@ -293,8 +321,9 @@ def analyze_email(raw: str | bytes) -> RiskAssessment:
     link_domains = _extract_link_domains(msg)
     result.link_domains = link_domains
     if link_domains and sender_domain:
+        sender_org = registrable_domain(sender_domain)
         result.link_domain_mismatch = not any(
-            sender_domain in ld or ld in sender_domain for ld in link_domains
+            registrable_domain(ld) == sender_org for ld in link_domains
         )
 
     result.infra_risk_score, result.reasons = _score(result)
@@ -373,4 +402,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()

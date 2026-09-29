@@ -1,5 +1,6 @@
 ﻿Layer-2/models/
 Layer-2/data/
+Layer-3/cache/
 __pycache__/
 *.pyc
 *.safetensors
@@ -9,8 +10,21 @@ __pycache__/
 *.csv
 *.zip
 *.eml
+*.log
+
+# virtual environments (.venv, .venv-1, .venv-2, .venv-3, ...)
 .venv/
+.venv*/
 venv/
+
+# secrets
+.env
+.env.*
+
+# local run output
+results/run_check_log.txt
+results/ubs_check.json
+
 .vscode/
 .DS_Store
 
@@ -18,10 +32,18 @@ frontend/node_modules/
 frontend/dist/
 node_modules/
 dist/
-*.log
 
-frontend/node_modules/
-frontend/dist/
-node_modules/
-dist/
-*.log
+# raw / private data: only the converter scripts are shared.
+# (Files that are already in git, e.g. the public Nazario/SpamAssassin sets, stay tracked.)
+data_collection/*
+!data_collection/*.py
+!data_collection/nazario/
+!data_collection/spamassassin/
+data_collection/spamassassin/*/
+test_emails/
+
+# local helper scripts and backups
+run_check.ps1
+push_to_github.ps1
+results/push_log.txt
+*.backup-*

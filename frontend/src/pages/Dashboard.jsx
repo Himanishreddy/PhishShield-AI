@@ -1,109 +1,195 @@
-// Session dashboard: rolls up everything analyzed since the app was opened.
-// Nothing is stored server-side; this is an in-memory view of the session.
-
-function Stat({ label, value, tone }) {
+function getVerdict(result) {
   return (
-    <div className={`stat ${tone || ""}`}>
-      <div className="stat-value">{value}</div>
-      <div className="stat-label">{label}</div>
-    </div>
+    result?.final?.verdict ||
+    result?.layer3?.final_verdict ||
+    result?.final_verdict ||
+    "needs_verification"
   );
 }
 
-function verdictLabel(v) {
-  if (v === "ai_phish") return "AI phishing";
-  if (v === "phishing") return "Phishing";
-  if (v === "suspicious") return "Suspicious";
-  return "Clean";
+function getRisk(result) {
+  return (
+    result?.final?.risk_score ??
+    result?.layer3?.risk_score ??
+    result?.final_risk_score ??
+    0
+  );
 }
 
-function pillClass(v) {
-  if (v === "ai_phish" || v === "phishing") return "phishing";
-  if (v === "suspicious") return "suspicious";
-  return "clean";
+function getLabel(verdict) {
+  if (
+    verdict === "phishing_threat" ||
+    verdict === "phishing"
+  ) {
+    return "Dangerous";
+  }
+
+  if (
+    verdict === "ai_assisted_phishing" ||
+    verdict === "ai_phish"
+  ) {
+    return "Dangerous";
+  }
+
+  if (
+    verdict === "needs_verification" ||
+    verdict === "suspicious"
+  ) {
+    return "Be careful";
+  }
+
+  return "Looks safe";
+}
+
+function getClass(verdict) {
+  if (
+    verdict === "phishing_threat" ||
+    verdict === "phishing" ||
+    verdict === "ai_assisted_phishing" ||
+    verdict === "ai_phish"
+  ) {
+    return "danger";
+  }
+
+  if (
+    verdict === "needs_verification" ||
+    verdict === "suspicious"
+  ) {
+    return "warning";
+  }
+
+  return "safe";
 }
 
 export default function Dashboard({ history }) {
-  const total = history.length;
-  const aiPhish = history.filter((r) => r.final_verdict === "ai_phish").length;
-  const humanPhish = history.filter((r) => r.final_verdict === "phishing").length;
-  const phishing = humanPhish + aiPhish;
-  const suspicious = history.filter((r) => r.final_verdict === "suspicious").length;
-  const clean = history.filter((r) => r.final_verdict === "clean").length;
+  const dangerous = history.filter((item) => {
+    const verdict = getVerdict(item);
 
-  const pct = (n) => (total ? (n / total) * 100 : 0);
-
-  if (total === 0) {
     return (
-      <div className="dashboard">
-        <h1>Dashboard</h1>
-        <div className="empty-state">
-          Nothing analyzed yet. Head to <strong>Analyze</strong>, run an email,
-          and it'll show up here.
-        </div>
-      </div>
+      verdict === "phishing_threat" ||
+      verdict === "phishing" ||
+      verdict === "ai_assisted_phishing" ||
+      verdict === "ai_phish"
     );
-  }
+  }).length;
+
+  const careful = history.filter((item) => {
+    const verdict = getVerdict(item);
+
+    return (
+      verdict === "needs_verification" ||
+      verdict === "suspicious"
+    );
+  }).length;
+
+  const safe = history.filter((item) => {
+    const verdict = getVerdict(item);
+
+    return (
+      verdict === "likely_legitimate" ||
+      verdict === "legitimate" ||
+      verdict === "ham" ||
+      verdict === "clean"
+    );
+  }).length;
 
   return (
     <div className="dashboard">
-      <h1>Session overview</h1>
-      <p className="dash-sub">
-        A summary of the {total} email{total === 1 ? "" : "s"} you've analyzed
-        this session.
-      </p>
 
-      <div className="stat-row">
-        <Stat label="Analyzed" value={total} />
-        <Stat label="Phishing" value={phishing} tone="phishing" />
-        <Stat label="AI phishing" value={aiPhish} tone="phishing" />
-        <Stat label="Clean" value={clean} tone="clean" />
+      <div className="analyze-intro">
+        <p className="eyebrow">YOUR RESULTS</p>
+
+        <h1>Email history</h1>
+
+        <p>
+          A quick look at the emails you've checked during this session.
+        </p>
       </div>
 
-      <section className="dist">
-        <h3>Verdict split</h3>
-        <div className="dist-bar">
-          <div className="dist-seg phishing" style={{ width: `${pct(phishing)}%` }} />
-          <div className="dist-seg suspicious" style={{ width: `${pct(suspicious)}%` }} />
-          <div className="dist-seg clean" style={{ width: `${pct(clean)}%` }} />
-        </div>
-        <div className="dist-legend">
-          <span><i className="dot phishing" /> Phishing {phishing}</span>
-          <span><i className="dot suspicious" /> Suspicious {suspicious}</span>
-          <span><i className="dot clean" /> Clean {clean}</span>
-        </div>
-      </section>
+      <div className="stats">
 
-      <section className="recent">
-        <h3>Recent analyses</h3>
-        <table className="recent-table">
-          <thead>
-            <tr>
-              <th>Verdict</th>
-              <th>Risk</th>
-              <th>Sender</th>
-              <th>Subject</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.slice(0, 12).map((r, i) => {
-              const layer1 = r.layer1 || {};
+        <div className="stat-card">
+          <span>Emails checked</span>
+          <strong>{history.length}</strong>
+        </div>
+
+        <div className="stat-card">
+          <span>Dangerous</span>
+          <strong>{dangerous}</strong>
+        </div>
+
+        <div className="stat-card">
+          <span>Be careful</span>
+          <strong>{careful}</strong>
+        </div>
+
+        <div className="stat-card">
+          <span>Looks safe</span>
+          <strong>{safe}</strong>
+        </div>
+
+      </div>
+
+      <div className="dashboard-card">
+
+        <div className="dashboard-card-header">
+          <div>
+            <p className="eyebrow">RECENT CHECKS</p>
+            <h2>Emails you've checked</h2>
+          </div>
+        </div>
+
+        {history.length === 0 ? (
+          <div className="empty-state">
+            <h3>No emails checked yet</h3>
+            <p>
+              Go to "Check an Email" and analyze your first message.
+            </p>
+          </div>
+        ) : (
+          <div className="history-list">
+
+            {history.map((item, index) => {
+              const verdict = getVerdict(item);
+              const label = getLabel(verdict);
+              const className = getClass(verdict);
+              const risk = getRisk(item);
+
+              const sender =
+                item?.layer1?.from_address ||
+                item?.layer1?.from ||
+                item?.sender ||
+                "Sender unavailable";
+
+              const subject =
+                item?.layer1?.subject ||
+                item?.subject ||
+                "No subject";
+
               return (
-                <tr key={i}>
-                  <td>
-                    <span className={`pill ${pillClass(r.final_verdict)}`}>
-                      {verdictLabel(r.final_verdict)}
-                    </span>
-                  </td>
-                  <td className="mono">{Math.round(r.final_risk_score)}</td>
-                  <td className="mono-trunc">{layer1.from_address || "—"}</td>
-                  <td className="subj">{layer1.subject || "—"}</td>
-                </tr>
+                <div className="history-row" key={index}>
+
+                  <div className="history-info">
+                    <strong>{subject}</strong>
+                    <span>{sender}</span>
+                  </div>
+
+                  <div className={`history-status ${className}`}>
+                    {label}
+                  </div>
+
+                  <div className="history-risk">
+                    Risk {risk}
+                  </div>
+
+                </div>
               );
             })}
-          </tbody>
-        </table>
-      </section>
+
+          </div>
+        )}
+
+      </div>
     </div>
   );
-}
+}

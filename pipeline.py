@@ -1,30 +1,33 @@
 """
 PhishShield AI — Pipeline Orchestrator
 
-Ties Layer 1 (deterministic rules) and Layer 2 (DistilBERT) into one
-hybrid detector, emitting a single combined verdict per email.
+Flow:
+    EMAIL -> Layer 1 (rules/headers) -> Layer 2 (DistilBERT) -> fusion -> Layer 3 -> FINAL
 
-Design (the "hybrid" strategy discussed):
-  * Layer 1 runs on EVERY email — it's free and catches header/domain
-    attacks the text model can't see (spoofing, DMARC fail, lookalikes).
-  * Layer 2 runs UNLESS Layer 1 is highly confident the email is clean
-    AND came from an authenticated sender. This saves compute while
-    still defending against text-only phishing that Layer 1 can't catch.
-  * The two signals are fused into one final_risk_score (0-100) and a
-    final_verdict, with both layers' evidence preserved for the analyst.
+  * Layer 1 runs on EVERY email (free; catches header/domain attacks).
+  * Layer 2 runs unless Layer 1 is confident the email is clean AND authenticated.
+  * fuse() combines Layers 1+2 into a numeric assessment. It is EVIDENCE for
+    Layer 3, and it is kept in the output as `fusion` (needed for ablation).
+  * Layer 3 (GPT adjudicator) runs on EVERY email and is the final authority.
+    Its verdict is copied into `final` and is never modified afterwards.
+  * If Layer 3 cannot produce a verdict (no key, API error, invalid reply) the
+    result falls back to the fused assessment and is marked `degraded: true`,
+    `decided_by: "fusion_fallback"`. It is never presented as a GPT decision.
 
-This orchestrator imports the two existing modules rather than
-reimplementing them, so there's one source of truth for each layer.
-
-Expected layout (adjust --model / import paths to match yours):
-    Phishing/
-      Layer-1/layer1_detector.py
-      Layer-2/predict.py
-      Layer-2/models/phishing-model/
+Output keys
+  final            Layer 3's decision (new vocabulary: likely_legitimate,
+                   needs_verification, phishing_threat, ai_assisted_phishing)
+  final_verdict    COMPATIBILITY: the same decision in the old vocabulary
+  final_risk_score   (clean / suspicious / phishing / ai_phish) so the existing
+                   React app and Streamlit dashboard keep working unchanged.
+                   Derived mechanically from `final`; not an independent score.
+  fusion           the pre-Layer-3 fused assessment
+  layer1, layer2, layer3   each layer's evidence
 
 Usage:
-    python pipeline.py --model ./Layer-2/models/phishing-model --eml ./Layer-1/sample_phish.eml --pretty
-    python pipeline.py --model ./Layer-2/models/phishing-model --dir ./some_emails --pretty
+    python pipeline.py --model ./Layer-2/models/phishing-model-3class --eml ./Layer-1/sample_phish.eml --pretty
+    python pipeline.py --model ./Layer-2/models/phishing-model-3class --dir ./some_emails --pretty
+    python pipeline.py --model ... --eml x.eml --no-layer3     # Layers 1+2+fusion only (ablation / offline)
 """
 
 from __future__ import annotations
@@ -161,12 +164,68 @@ def fuse(layer1_result: dict, layer2_result: dict | None) -> dict:
     }
 
 
+# Layer 3's vocabulary <-> the older fused vocabulary used by the current frontend.
+_L3_TO_LEGACY = {
+    "likely_legitimate": "clean",
+    "needs_verification": "suspicious",
+    "phishing_threat": "phishing",
+    "ai_assisted_phishing": "ai_phish",
+}
+_FUSION_TO_L3 = {v: k for k, v in _L3_TO_LEGACY.items()}
+
+
+def build_final(l3: dict | None, fused: dict, l1_summary: dict) -> dict:
+    """Assemble the `final` block.
+
+    * Layer 3 produced a verdict  -> copy it verbatim. Nothing modifies it.
+    * Layer 3 was skipped (--no-layer3) -> fused assessment, decided_by "fusion_only".
+    * Layer 3 failed              -> fused assessment, marked degraded, with the reason.
+    """
+    if l3 is not None and l3.get("status") == "ok":
+        return {
+            "verdict": l3["final_verdict"],
+            "risk_score": l3["risk_score"],
+            "confidence": l3["confidence"],
+            "classification": l3["classification"],
+            "debrief": l3["debrief"],
+            "evidence": l3["evidence"],
+            "recommended_action": l3["recommended_action"],
+            "layer2_supported": l3["layer2_supported"],
+            "guardrails_applied": l3.get("guardrails_applied", []),
+            "decided_by": "layer3",
+            "degraded": False,
+        }
+
+    verdict = _FUSION_TO_L3.get(fused["final_verdict"], "needs_verification")
+    if l3 is None:
+        why, decided_by, degraded = "Layer 3 was not run for this request.", "fusion_only", False
+    else:
+        why = (f"Layer 3 could not produce a verdict ({l3.get('status')}: {l3.get('detail')}). "
+               f"This is the Layer 1 + Layer 2 fused assessment, not a Layer 3 decision.")
+        decided_by, degraded = "fusion_fallback", True
+    return {
+        "verdict": verdict,
+        "risk_score": fused["final_risk_score"],
+        "confidence": None,
+        "classification": None,
+        "debrief": why,
+        "evidence": list(l1_summary.get("reasons") or []),
+        "recommended_action": ("Treat as provisional and re-run when Layer 3 is available."
+                               if degraded else "Review the Layer 1 and Layer 2 evidence."),
+        "layer2_supported": None,
+        "guardrails_applied": [],
+        "decided_by": decided_by,
+        "degraded": degraded,
+    }
+
+
 def run_pipeline(raw_eml: bytes, layer1_mod, classifier, load_eml_text_fn,
-                 always_run_layer2: bool = False, layer3_mod=None) -> dict:
+                 always_run_layer2: bool = False, layer3_mod=None,
+                 l3_model: str | None = None) -> dict:
     # ---- Layer 1 ----
     l1 = layer1_mod.analyze_email(raw_eml).to_dict()
 
-    # ---- Decide whether to run Layer 2 ----
+    # ---- Decide whether to run Layer 2 (unchanged) ----
     l1_score = l1.get("infra_risk_score", 0.0)
     auth = l1.get("auth", {})
     authenticated = (auth.get("spf") == "pass" and auth.get("dkim") == "pass"
@@ -196,21 +255,26 @@ def run_pipeline(raw_eml: bytes, layer1_mod, classifier, load_eml_text_fn,
         "subject": l1.get("subject"),
     }
 
-    # ---- Layer 3: attribution — ONLY on confirmed phishing ----
-    # Matches the architecture: expensive LLM analysis runs on the few
-    # confirmed threats, not on every email.
+    # ---- Layer 3: runs on EVERY email and is the final authority ----
     l3 = None
-    layer3_ran = False
-    if layer3_mod is not None and fused["final_verdict"] == "phishing":
-        subject = l1.get("subject", "") or msg.get("Subject", "") or ""
-        body = _extract_text(msg)
-        l3 = layer3_mod.attribute(subject, body, layer1_evidence=l1_summary)
-        layer3_ran = l3.get("_meta", {}).get("status") == "ok"
+    if layer3_mod is not None:
+        l3 = layer3_mod.adjudicate(raw_eml, l1, l2, fused, model=l3_model)
 
+    final = build_final(l3, fused, l1_summary)
+    layer3_ran = bool(l3 and l3.get("status") == "ok")
+
+    # Nothing below this line changes `final`. The top-level final_verdict /
+    # final_risk_score are a mechanical translation of it for the existing UI.
     return {
-        **fused,
+        "final": final,
+        "final_verdict": _L3_TO_LEGACY[final["verdict"]],
+        "final_risk_score": final["risk_score"],
+        "layer2_phish_probability": fused["layer2_phish_probability"],
+        "layer2_predicted_label": fused["layer2_predicted_label"],
+        "layer1_had_data": fused["layer1_had_data"],
         "layer2_ran": layer2_ran,
         "layer3_ran": layer3_ran,
+        "fusion": fused,
         "layer1": l1_summary,
         "layer2": l2,
         "layer3": l3,
@@ -258,7 +322,11 @@ def main():
     ap.add_argument("--always-run-layer2", action="store_true",
                     help="Run Layer 2 on every email (ensemble mode) instead of gating")
     ap.add_argument("--layer3", action="store_true",
-                    help="Run Layer 3 LLM attribution on confirmed phishing (needs Ollama running)")
+                    help="Accepted for backward compatibility. Layer 3 now runs by default.")
+    ap.add_argument("--no-layer3", action="store_true",
+                    help="Skip Layer 3 (Layers 1+2+fusion only). For ablation runs / offline use.")
+    ap.add_argument("--l3-model", default=None,
+                    help="Override the Layer 3 model (default: PHISHSHIELD_L3_MODEL or gpt-6-sol)")
     ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args()
 
@@ -267,7 +335,7 @@ def main():
     predict_mod = _load_module("predict", root / "Layer-2" / "predict.py")
 
     layer3_mod = None
-    if args.layer3:
+    if not args.no_layer3:
         layer3_mod = _load_module("layer3_attribution", root / "Layer-3" / "layer3_attribution.py")
 
     classifier = predict_mod.PhishClassifier(args.model)
@@ -278,7 +346,7 @@ def main():
         for path in sorted(Path(args.dir).rglob("*.eml")):
             r = run_pipeline(path.read_bytes(), layer1_mod, classifier,
                              predict_mod.load_eml_text, args.always_run_layer2,
-                             layer3_mod=layer3_mod)
+                             layer3_mod=layer3_mod, l3_model=args.l3_model)
             r["file"] = path.name
             results.append(r)
         print(json.dumps(results, indent=indent, default=str))
@@ -290,7 +358,7 @@ def main():
     raw = Path(args.eml).read_bytes()
     result = run_pipeline(raw, layer1_mod, classifier,
                           predict_mod.load_eml_text, args.always_run_layer2,
-                          layer3_mod=layer3_mod)
+                          layer3_mod=layer3_mod, l3_model=args.l3_model)
     print(json.dumps(result, indent=indent, default=str))
 
 
