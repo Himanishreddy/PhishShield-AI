@@ -33,8 +33,39 @@ def load_eml_text(path: Path) -> str:
     from email import message_from_bytes
     import re
 
+    from email.header import Header, decode_header
+
+    def decode_hdr(value) -> str:
+        if value is None:
+            return ""
+        try:
+            chunks = decode_header(value if isinstance(value, Header) else str(value))
+        except Exception:
+            return str(value)
+        out = []
+        for chunk, charset in chunks:
+            if isinstance(chunk, str):
+                out.append(chunk)
+                continue
+            for enc in ([charset] if charset and charset != "unknown-8bit" else []) + ["utf-8", "latin-1"]:
+                try:
+                    out.append(chunk.decode(enc))
+                    break
+                except (LookupError, UnicodeDecodeError):
+                    continue
+        return "".join(out)
+
+    def decode_payload(part) -> str:
+        payload = part.get_payload(decode=True)
+        if not payload:
+            return ""
+        try:
+            return payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+        except LookupError:
+            return payload.decode("utf-8", errors="ignore")
+
     msg = message_from_bytes(path.read_bytes())
-    subject = msg.get("Subject", "") or ""
+    subject = decode_hdr(msg.get("Subject"))
 
     def strip_html(html: str) -> str:
         html = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
@@ -45,17 +76,16 @@ def load_eml_text(path: Path) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    body_parts.append(payload.decode(errors="ignore"))
+                text = decode_payload(part)
+                if text:
+                    body_parts.append(text)
             elif part.get_content_type() == "text/html" and not body_parts:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    body_parts.append(strip_html(payload.decode(errors="ignore")))
+                text = decode_payload(part)
+                if text:
+                    body_parts.append(strip_html(text))
     else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            text = payload.decode(errors="ignore")
+        text = decode_payload(msg)
+        if text:
             if msg.get_content_type() == "text/html":
                 text = strip_html(text)
             body_parts.append(text)
@@ -145,4 +175,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()

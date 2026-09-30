@@ -1,0 +1,18 @@
+# Keep the Docker build context small; the model is downloaded inside the image.
+.git
+.venv*
+venv
+**/__pycache__
+**/*.pyc
+Layer-2/models
+Layer-2/data
+Layer-3/cache
+frontend
+data_collection
+results
+test_emails
+*.zip
+*.csv
+*.eml
+.env
+.env.*

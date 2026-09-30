@@ -239,7 +239,7 @@ def run_pipeline(raw_eml: bytes, layer1_mod, classifier, load_eml_text_fn,
     layer2_ran = False
     if always_run_layer2 or not confident_clean:
         # Extract the same text representation the model was trained on
-        text = _extract_text(msg)
+        text = _extract_text(msg, raw_eml)
         if text.strip():
             l2 = classifier.predict(text)
             layer2_ran = True
@@ -281,10 +281,58 @@ def run_pipeline(raw_eml: bytes, layer1_mod, classifier, load_eml_text_fn,
     }
 
 
-def _extract_text(msg) -> str:
-    """Subject + body, matching how the model was trained."""
+def _decode_hdr(value) -> str:
+    """Header value -> readable text (RFC 2047 encoded words and raw non-ASCII
+    headers, which the parser returns as Header objects instead of str)."""
+    from email.header import Header, decode_header
+    if value is None:
+        return ""
+    try:
+        chunks = decode_header(value if isinstance(value, Header) else str(value))
+    except Exception:
+        return str(value)
+    out = []
+    for chunk, charset in chunks:
+        if isinstance(chunk, str):
+            out.append(chunk)
+            continue
+        for enc in ([charset] if charset and charset != "unknown-8bit" else []) + ["utf-8", "latin-1"]:
+            try:
+                out.append(chunk.decode(enc))
+                break
+            except (LookupError, UnicodeDecodeError):
+                continue
+    return "".join(out)
+
+
+def _decode_payload(part) -> str:
+    """Decode a MIME part's body using its declared charset (utf-8 if none)."""
+    payload = part.get_payload(decode=True)
+    if not payload:
+        return ""
+    try:
+        return payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+    except LookupError:                      # unknown/bogus charset name
+        return payload.decode("utf-8", errors="ignore")
+
+
+_REAL_HEADERS = ("From", "Subject", "Date", "Message-ID", "To")
+
+
+def _extract_text(msg, raw: bytes | None = None) -> str:
+    """Subject + body, matching how the model was trained.
+
+    If the input has no real email headers (someone pasted just the message
+    text), the MIME parser can swallow a first line such as "Urgent: verify
+    your account" as a fake header. In that case the text is used exactly as
+    given, so Layer 2 sees the whole message.
+    """
     import re
-    subject = msg.get("Subject", "") or ""
+
+    if raw is not None and not any(msg.get(h) for h in _REAL_HEADERS):
+        return raw.decode("utf-8", errors="ignore").strip()
+
+    subject = _decode_hdr(msg.get("Subject"))
 
     def strip_html(html: str) -> str:
         html = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
@@ -294,17 +342,16 @@ def _extract_text(msg) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    parts.append(payload.decode(errors="ignore"))
+                text = _decode_payload(part)
+                if text:
+                    parts.append(text)
             elif part.get_content_type() == "text/html" and not parts:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    parts.append(strip_html(payload.decode(errors="ignore")))
+                text = _decode_payload(part)
+                if text:
+                    parts.append(strip_html(text))
     else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            text = payload.decode(errors="ignore")
+        text = _decode_payload(msg)
+        if text:
             if msg.get_content_type() == "text/html":
                 text = strip_html(text)
             parts.append(text)
@@ -363,4 +410,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()

@@ -111,7 +111,9 @@ Phishing/
 ├── test_layer3.py            Offline tests for Layer 3 + pipeline (no API key needed)
 ├── backend/main.py           FastAPI REST API (POST /api/analyze)
 ├── frontend/                 React (Vite) web app
-├── requirements.txt
+├── requirements.txt          Everything (training, dashboard, evaluation, API)
+├── requirements-api.txt      Only what the deployed API needs (used by Dockerfile)
+├── Dockerfile                Backend container for Render
 ├── README.md
 │
 ├── Layer-1/

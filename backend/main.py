@@ -39,6 +39,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -83,19 +85,37 @@ def _default_model_dir() -> Path:
 # App + lazy-loaded detection system (load once, on first request)
 # ---------------------------------------------------------------------------
 
+@asynccontextmanager
+async def _lifespan(_app):
+    """Load the model in the background right after the server starts, so the
+    first real request doesn't wait for it and /api/health answers at once."""
+    def _load():
+        try:
+            get_system()
+        except Exception as e:                      # reported again on first request
+            print(f"[startup] model preload failed: {e}", flush=True)
+    threading.Thread(target=_load, daemon=True).start()
+    yield
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title="PhishShield AI API",
     description="Hybrid phishing detection — rules + DistilBERT + AI adjudicator.",
     version="1.0.0",
 )
 
-# Allow a local frontend (React dev server etc.) to call the API in development.
-# Tighten allow_origins to your real domain before any public deployment.
+# Which websites may call this API from a browser. Set ALLOWED_ORIGINS on the
+# server to your frontend URL(s), comma-separated, e.g.
+#   ALLOWED_ORIGINS=https://phishshield.vercel.app
+# Unset = allow any origin (fine for local development). No cookies are used,
+# so credentials are not needed.
+_origins = [o.strip().rstrip("/") for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_origins or ["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -112,10 +132,30 @@ class _System:
 
 
 SYS = _System()
+_LOAD_LOCK = threading.Lock()   # two first requests must not load the model twice (RAM)
+
+
+def _resolve_model(name: Optional[str]) -> Optional[str]:
+    """Map a model NAME from a request to its folder under Layer-2/models/.
+    Only plain folder names are accepted, never paths, so a caller cannot make
+    the server load files from anywhere else on disk."""
+    if not name:
+        return None
+    models_dir = (ROOT / "Layer-2" / "models").resolve()
+    candidate = (models_dir / name).resolve()
+    if (Path(name).name != name or candidate.parent != models_dir
+            or not candidate.is_dir()):
+        raise ValueError(f"Unknown model '{name}'. See GET /api/models.")
+    return str(candidate)
 
 
 def get_system(model_path: Optional[str] = None):
     """Load the detection system once and cache it on SYS."""
+    with _LOAD_LOCK:
+        return _get_system_locked(model_path)
+
+
+def _get_system_locked(model_path: Optional[str] = None):
     target = model_path or (SYS.model_path or str(_default_model_dir()))
 
     # (Re)load only if not loaded yet or the requested model changed
@@ -135,17 +175,18 @@ def get_system(model_path: Optional[str] = None):
     return SYS
 
 
+
 # ---------------------------------------------------------------------------
 # Request / response schemas (Pydantic — gives validation + auto docs)
 # ---------------------------------------------------------------------------
 
 class AnalyzeRequest(BaseModel):
     email: str = Field(..., description="Raw email text, including headers if available",
-                       min_length=1)
+                       min_length=1, max_length=2_000_000)
     ensemble: bool = Field(False, description="Run Layer 2 on every email instead of gating")
     run_layer3: bool = Field(True, description="DEPRECATED and ignored: Layer 3 now runs on every email. Kept so existing clients that send this field keep working.")
     skip_layer3: bool = Field(False, description="Skip Layer 3 and return the Layer 1 + Layer 2 fused assessment only (for ablation/testing). Off by default.")
-    model: Optional[str] = Field(None, description="Path to a specific model folder (optional)")
+    model: Optional[str] = Field(None, description="Name of a model folder under Layer-2/models (optional; see GET /api/models)")
 
     model_config = {"json_schema_extra": {"examples": [{
         "email": "From: \"Microsoft Support\" <security-update@micros0ft-support.com>\n"
@@ -193,7 +234,12 @@ def analyze(req: AnalyzeRequest):
     evidence. This is the primary endpoint a frontend calls.
     """
     try:
-        system = get_system(req.model)
+        model_path = _resolve_model(req.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        system = get_system(model_path)
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
@@ -205,7 +251,7 @@ def analyze(req: AnalyzeRequest):
 
     try:
         result = system.pipeline.run_pipeline(
-            req.email.encode(),
+            req.email.encode("utf-8", errors="replace"),
             system.layer1,
             system.classifier,
             system.predict.load_eml_text,
@@ -221,4 +267,4 @@ def analyze(req: AnalyzeRequest):
 @app.get("/", tags=["meta"])
 def root():
     """Friendly landing pointer to the docs."""
-    return {"message": "PhishShield AI API. Interactive docs at /docs"}
+    return {"message": "PhishShield AI API. Interactive docs at /docs"}

@@ -1,0 +1,9 @@
+# PhishShield AI - packages the deployed API server needs (used by the Dockerfile).
+# torch (CPU build) is installed separately in the Dockerfile.
+# For training, the dashboard and evaluation use requirements.txt instead.
+transformers>=4.40
+huggingface_hub>=0.23
+openai>=1.40
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.0

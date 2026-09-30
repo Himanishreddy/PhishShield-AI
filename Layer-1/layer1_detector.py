@@ -21,9 +21,35 @@ import sys
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from email import message_from_string, message_from_bytes
+from email.header import Header, decode_header
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Optional
+
+
+def decode_hdr(value) -> str:
+    """Header value -> readable text. Handles RFC 2047 encoded words
+    (=?UTF-8?B?...?=) and raw non-ASCII headers (e.g. a subject containing
+    a rupee sign or an accented name), which the parser returns as Header objects
+    rather than str."""
+    if value is None:
+        return ""
+    try:
+        chunks = decode_header(value if isinstance(value, Header) else str(value))
+    except Exception:
+        return str(value)
+    out = []
+    for chunk, charset in chunks:
+        if isinstance(chunk, str):
+            out.append(chunk)
+            continue
+        for enc in ([charset] if charset and charset != "unknown-8bit" else []) + ["utf-8", "latin-1"]:
+            try:
+                out.append(chunk.decode(enc))
+                break
+            except (LookupError, UnicodeDecodeError):
+                continue
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +146,7 @@ def _parse_auth_results(msg: Message) -> AuthResults:
     comments are removed first, because they can contain other results (e.g. an
     ARC summary "arc=pass (spf=... dkim=...)") that are not this message's own."""
     all_headers = msg.get_all("Authentication-Results", []) or []
-    top = str(all_headers[0]) if all_headers else ""
+    top = decode_hdr(all_headers[0]) if all_headers else ""
     for _ in range(3):                                   # nested comments
         top = re.sub(r"\([^()]*\)", " ", top)
 
@@ -276,10 +302,10 @@ def analyze_email(raw: str | bytes) -> RiskAssessment:
     msg = message_from_bytes(raw) if isinstance(raw, bytes) else message_from_string(raw)
 
     result = RiskAssessment()
-    result.message_id = msg.get("Message-ID", "").strip()
-    result.subject = msg.get("Subject", "")
+    result.message_id = decode_hdr(msg.get("Message-ID")).strip()
+    result.subject = decode_hdr(msg.get("Subject"))
 
-    from_header = msg.get("From", "")
+    from_header = decode_hdr(msg.get("From"))
     display_name, from_address = parseaddr(from_header)
     result.from_display = display_name
     result.from_address = from_address
@@ -299,7 +325,7 @@ def analyze_email(raw: str | bytes) -> RiskAssessment:
     result.domain.domain_age_source = age_source
 
     # Reply-To mismatch: classic BEC / phishing tell
-    reply_to = msg.get("Reply-To", "")
+    reply_to = decode_hdr(msg.get("Reply-To"))
     if reply_to:
         reply_domain = _extract_domain(reply_to)
         if reply_domain and registrable_domain(reply_domain) != registrable_domain(sender_domain):
@@ -402,4 +428,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()

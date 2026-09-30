@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TOKENIZERS_PARALLELISM=false
 
 WORKDIR /app
 
@@ -11,12 +12,10 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu \
     torch
 
-# Install application dependencies.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Hugging Face downloader.
-RUN pip install --no-cache-dir huggingface_hub
+# Install only what the API server needs (training/dashboard packages from
+# requirements.txt are not needed here and would slow down every Render build).
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
 
 # Copy application source.
 COPY backend/ ./backend/

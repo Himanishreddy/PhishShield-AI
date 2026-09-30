@@ -69,7 +69,7 @@ import secrets
 import sys
 import time
 from email import message_from_bytes
-from email.header import decode_header, make_header
+from email.header import Header, decode_header
 from pathlib import Path
 from typing import Any, Optional
 
@@ -274,10 +274,26 @@ def _scrub(value: Any) -> str:
 
 
 def _decode_hdr(value: Any) -> str:
+    """Header value -> readable text. Raw non-ASCII headers come back from the
+    parser as Header objects whose str() is garbled, so decode the chunks."""
+    if value is None:
+        return ""
     try:
-        return str(make_header(decode_header(str(value))))
+        chunks = decode_header(value if isinstance(value, Header) else str(value))
     except Exception:
         return str(value)
+    out = []
+    for chunk, charset in chunks:
+        if isinstance(chunk, str):
+            out.append(chunk)
+            continue
+        for enc in ([charset] if charset and charset != "unknown-8bit" else []) + ["utf-8", "latin-1"]:
+            try:
+                out.append(chunk.decode(enc))
+                break
+            except (LookupError, UnicodeDecodeError):
+                continue
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,4 +1123,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()
