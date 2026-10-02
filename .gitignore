@@ -47,3 +47,7 @@ run_check.ps1
 push_to_github.ps1
 results/push_log.txt
 *.backup-*
+
+# one-click push helper (local only)
+push_now.bat
+push_now.log

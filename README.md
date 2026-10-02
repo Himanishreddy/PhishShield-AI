@@ -9,6 +9,9 @@ The project's focus is detecting **AI-generated phishing** alongside classic
 human-written phishing, and giving a security analyst not just a verdict but the
 *evidence* behind it.
 
+**Live demo:** <https://phish-shield-ai-omega.vercel.app> — backend on Render's free tier,
+so the first check after a period of inactivity can take about a minute while it wakes up.
+
 ---
 
 ## Why a layered design
@@ -59,35 +62,65 @@ sufficient; together they are complementary.
 
 ## Results
 
-Layer 2 was fine-tuned from `distilbert-base-uncased` on a 3-class corpus of
-23,522 emails (legitimate / human-phishing / AI-generated-phishing), assembled
-from public datasets. On a held-out test set:
+Layer 2 (the current model, **V5**) was fine-tuned from `distilbert-base-uncased`
+on 21,776 training emails — 12,161 legitimate, 5,754 human-written phishing and
+3,861 AI-generated phishing — drawn from public corpora (a phishing/legitimate
+email set, an AI-generated phishing set, SpamAssassin, Nazario 2022–2025, Enron)
+plus a small number of the author's own anonymised inbox emails. The splits are
+built with near-duplicate clustering, so an email template never appears in
+more than one of train / validation / test (leakage check passed).
+
+### Internal test set (4,371 emails, same sources as training)
 
 | Metric | Score |
 |---|---|
-| Macro F1 | 99.2% |
-| Recall — legitimate | 99.3% |
-| Recall — human phishing | 98.3% |
+| Accuracy | 98.72% |
+| Macro precision | 98.80% |
+| Macro recall | 98.71% |
+| Macro F1 | 98.76% |
+| Recall — legitimate | 98.87% |
+| Recall — human phishing | 97.27% |
 | Recall — AI phishing | 100% |
+
+### External benchmark — 500 unseen legitimate Enron emails
+
+None of these 500 emails appear in the training data (checked for exact and
+near-duplicate matches).
+
+| Metric | Score |
+|---|---|
+| Correctly classified as legitimate | 491 / 500 |
+| False-positive rate | **1.80%** |
+| Mean P(legitimate) | 98.26% |
+
+Result files: `results/v5_test/metrics.json`, `results/v5_enron/ood_report.json`.
 
 Metrics favor **recall** on the phishing classes by design: in security, a
 missed phish (false negative) is more costly than a false alarm (false
 positive), so the training loss is class-weighted accordingly.
 
+### Development history
+
+The first model flagged **15 of 20 (75%)** real legitimate emails from the
+author's inbox as phishing — security notices, OTP mails, campus recruitment
+and institutional circulars. The cause was that security/account vocabulary
+appeared almost only in the phishing class. Later versions fixed this by adding
+legitimate "hard negatives" (SpamAssassin hard ham, real inbox mail, Enron).
+Because 16 of those 20 inbox emails were then added to training, they are no
+longer a held-out test; the Enron benchmark above is the held-out measure.
+
 ### Honest limitations
 
 These numbers describe performance **on this dataset's distribution**, and they
-should be read with two caveats — both of which are discussed here rather than
-hidden, because understanding them is part of the engineering:
+should be read with these caveats — discussed here rather than hidden, because
+understanding them is part of the engineering:
 
 1. **Source-separation effect.** The perfect AI-phishing recall partly reflects
    the model learning artifacts that distinguish the *specific corpora* used
    (formatting, length, collection method), not a general notion of
-   "AI-written-ness." An out-of-distribution test — a hand-crafted AI-style
-   email from neither source — was misclassified, which exposes this. Honest
-   framing: the model separates *these datasets* near-perfectly; a
-   production-grade "AI detector" would need harder negatives and mixed-source
-   validation. (Listed under Future Work.)
+   "AI-written-ness." Honest framing: the model separates *these datasets*
+   near-perfectly; a production-grade "AI detector" would need harder
+   negatives and mixed-source validation. (Listed under Future Work.)
 
 2. **Layer 3 is an AI judgement, not proof.** The adjudicator can be wrong, so
    it is constrained in code: it cannot clear an email that Layer 1 has strong
@@ -99,6 +132,16 @@ hidden, because understanding them is part of the engineering:
    to interpret raw headers. The email itself is fenced as untrusted data to
    resist prompt injection. If the API is unavailable, the result falls back to
    the Layer 1 + Layer 2 assessment and is clearly marked as degraded.
+
+3. **Indian financial / transactional mail is still a weak spot.** Of the 4
+   real inbox emails that were never used in training, V5 flagged 3 as phishing
+   (an income-tax e-verification confirmation, a GST invoice and a merchandise
+   sale notice). The sample is small, but it shows where more legitimate
+   training data is needed.
+
+4. **No year-held-out phishing benchmark.** Nazario 2022–2025 phishing emails
+   are part of the training/validation/test pool, so phishing detection is
+   measured on the internal test set only, not on an unseen year.
 
 ---
 
